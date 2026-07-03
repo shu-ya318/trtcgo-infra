@@ -80,16 +80,19 @@ spec:
                 secretKeyRef:
                   name: backend-secret
                   key: admin-password
+                  optional: true
             - name: RAIL_PROXY_HOST
               valueFrom:
                 secretKeyRef:
                   name: backend-secret
                   key: rail-proxy-host
+                  optional: true
             - name: RAIL_PROXY_PORT
               valueFrom:
                 secretKeyRef:
                   name: backend-secret
                   key: rail-proxy-port
+                  optional: true
             - name: TDX_CLIENT_ID
               valueFrom:
                 secretKeyRef:
