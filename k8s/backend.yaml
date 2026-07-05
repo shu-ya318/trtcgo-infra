@@ -81,6 +81,12 @@ spec:
                   name: backend-secret
                   key: admin-password
                   optional: true
+            - name: CORS_ALLOWED_ORIGINS
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: cors-allowed-origins
+                  optional: true
             - name: RAIL_PROXY_HOST
               valueFrom:
                 secretKeyRef:
