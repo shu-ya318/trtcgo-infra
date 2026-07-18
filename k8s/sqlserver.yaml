@@ -1,3 +1,12 @@
+# 儲存機制：從 Volumes (使用 pv) 到 StorageClass
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path-retain
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
