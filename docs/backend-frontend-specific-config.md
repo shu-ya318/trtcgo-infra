@@ -68,8 +68,8 @@ spec:
                 secretKeyRef:
                   name: jwt-secret
                   key: secret
-            - name: JWT_ACCESS_TOKEN_EXPIRATION       # access token 有效時間（毫秒），直接寫死明文值
-              value: "900000"
+            - name: JWT_ACCESS_TOKEN_EXPIRATION       # access token 有效時間（毫秒），直接寫死明文值；3600000 毫秒 = 1 小時
+              value: "3600000"
             - name: JWT_REFRESH_TOKEN_EXPIRATION       # refresh token 有效時間（毫秒）
               value: "604800000"
             - name: ADMIN_PASSWORD                      # 從 backend-secret 讀取預設管理員密碼，optional: true 代表 key 不存在也不會讓 Pod 啟動失敗

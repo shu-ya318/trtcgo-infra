@@ -2,21 +2,29 @@
 
 > 審查範圍：`k8s/` 目錄下全部 manifests 與 Dockerfile
 > 審查基準：企業級中小型專案、前後端分離架構的 Kubernetes 主流實踐
-> 日期：2026-07-16
+> 日期：2026-07-16（狀態更新：2026-07-19）
+
+## 2026-07-19 進度更新
+
+- ✅ **第 8 點（hostPath PV）已完成**：改為 StorageClass `local-path-retain` 動態供應（commit `5b176cc`）；redis 一併移除 PVC、改為純快取無持久化，PVC 行為不一致的問題隨之消失。
+- ✅ **第 11 點的 redis 命名錯字已修正**：`redis-deploymentment` → `redis-deployment`。
+- 🔶 **第 1 點部分處理**：`k8s/*-secret.yaml` 已加入 `.gitignore` 並移出 git 追蹤，但**歷史紀錄仍保有舊憑證**，TDX / JWT / DB / Redis 憑證輪換仍未完成。
+- ⚠️ 新增觀察：StorageClass `local-path-retain` 在 `sqlserver.yaml` 開頭與 `local-path-retain-storageclass.yaml` 重複定義（內容相同），建議擇一保留。
+- 其餘項目（resources、鏡像 tag、Recreate/StatefulSet、Ingress、initContainers、replicas、securityContext、探針精細化、init Job 化）尚未處理。
 
 ## 總評
 
 目前的配置屬於「本機開發叢集（Minikube / Docker Desktop）可跑」的等級，服務拆分、Secret 引用、健康檢查等基本骨架都有做對。但距離可上線的企業級部署，有幾類問題必須處理，依嚴重性排序：
 
-| 優先級 | 問題 | 影響 |
-|--------|------|------|
-| 🔴 高 | 真實憑證（TDX client id/secret 等）以 base64 直接進版控 | 安全事故 |
-| 🔴 高 | 所有容器缺少 resources requests/limits | 排程不穩、可能被 OOM 波及整台節點 |
-| 🔴 高 | 鏡像全用 `latest` + `IfNotPresent` | 無法回滾、無法追蹤版本、更新不生效 |
-| 🟠 中 | 有狀態服務（SQL Server / Redis）用 Deployment 而非 StatefulSet，且未設 `Recreate` 策略 | 滾動更新時新舊 Pod 搶同一顆 RWO 磁碟而卡死 |
-| 🟠 中 | 缺 Ingress，前端只有 ClusterIP | 外部流量無入口 |
-| 🟠 中 | initContainer 用 `nc` 等待依賴服務 | 反模式，readiness probe 已足夠 |
-| 🟡 低 | 缺 namespace、缺標準 labels、命名錯字、無用的環境變數等 | 維運品質 |
+| 優先級 | 問題 | 影響 | 狀態（2026-07-19） |
+|--------|------|------|------|
+| 🔴 高 | 真實憑證（TDX client id/secret 等）以 base64 直接進版控 | 安全事故 | 🔶 已移出版控追蹤；歷史清理與憑證輪換未完成 |
+| 🔴 高 | 所有容器缺少 resources requests/limits | 排程不穩、可能被 OOM 波及整台節點 | ❌ 未處理 |
+| 🔴 高 | 鏡像全用 `latest` + `IfNotPresent` | 無法回滾、無法追蹤版本、更新不生效 | ❌ 未處理 |
+| 🟠 中 | 有狀態服務（SQL Server）用 Deployment 而非 StatefulSet，且未設 `Recreate` 策略 | 滾動更新時新舊 Pod 搶同一顆 RWO 磁碟而卡死 | ❌ 未處理（redis 已無 PVC，不再受此影響） |
+| 🟠 中 | 缺 Ingress，前端只有 ClusterIP | 外部流量無入口 | ❌ 未處理 |
+| 🟠 中 | initContainer 用 `nc` 等待依賴服務 | 反模式，readiness probe 已足夠 | ❌ 未處理 |
+| 🟡 低 | 缺 namespace、缺標準 labels、命名錯字、無用的環境變數等 | 維運品質 | 🔶 redis 命名錯字已修正，其餘未處理 |
 
 ---
 
@@ -35,6 +43,8 @@
    - **Sealed Secrets**（Bitnami）：加密後的 Secret 可以安全進版控，最適合中小型 GitOps 流程。
    - **External Secrets Operator** + 雲端 Secret Manager（AWS/GCP/Azure）：企業常見標配。
    - 最低限度：CI/CD 部署時用 `kubectl create secret ... --from-literal` 從 pipeline 變數注入。
+
+**目前狀態（2026-07-19）**：`k8s/*-secret.yaml` 已加入 `.gitignore`、不再被 git 追蹤（本機檔案保留供 `kubectl apply` 使用）。但 **git 歷史中仍有舊憑證**，第 1 步的憑證輪換（尤其 TDX 與 JWT）與 `*-secret.yaml.example` 範本仍待補上。
 
 ### 2. 缺少 resources requests / limits
 
@@ -86,9 +96,9 @@ resources:
 
 ## 🟠 中優先：架構層面應調整
 
-### 4. SQL Server / Redis 應改用 StatefulSet，或至少設定 `strategy: Recreate`
+### 4. SQL Server 應改用 StatefulSet，或至少設定 `strategy: Recreate`
 
-**現況**：兩個有狀態服務都用 Deployment，未指定更新策略（預設 `RollingUpdate`），掛載 `ReadWriteOnce` 的 PVC。
+**現況（2026-07-19 更新）**：SQL Server 用 Deployment，未指定更新策略（預設 `RollingUpdate`），掛載 `ReadWriteOnce` 的 PVC。redis 已移除 PVC、改為純快取無持久化，不再受此問題影響。
 
 **必要性**：`RollingUpdate` 會先啟動新 Pod 再終止舊 Pod。新舊 Pod 同時存在時會**爭奪同一顆 RWO volume**：若新 Pod 被排到不同節點，volume attach 失敗直接卡在 `ContainerCreating`；即使同節點，兩個 SQL Server 進程同時開同一份資料檔也有損毀風險。
 
@@ -132,9 +142,11 @@ Internet → Ingress Controller (nginx/traefik)
 
 **建議做法**：frontend / backend 調成 2 副本＋PDB（`minAvailable: 1`）。SQL Server / Redis 單副本可接受（多副本需要另外的複寫架構），但要確保 `Recreate` 策略與備份機制。流量有波動再考慮 HPA。
 
-### 8. hostPath PersistentVolume 不可攜、且兩個 PVC 行為不一致 ✅
+### 8. hostPath PersistentVolume 不可攜、且兩個 PVC 行為不一致 ✅ 已完成（2026-07-19）
 
-**現況**：`sqlserver.yaml` 手刻了一個 `hostPath` PV（`/mnt/data/sqlserver`）＋指定 `storageClassName: standard` 的 PVC；`redis-pvc` 則沒指定 storageClass、也沒有對應 PV。
+**處理結果**：commit `5b176cc` 已刪除手刻 hostPath PV，`sqlserver-pvc` 改用自訂 StorageClass `local-path-retain`（`rancher.io/local-path` 動態供應、`WaitForFirstConsumer`、`Retain`）；redis 一併移除 PVC、定位為純快取。遺留小問題：同一個 StorageClass 在 `sqlserver.yaml` 開頭與 `local-path-retain-storageclass.yaml` 重複定義，建議擇一保留。
+
+**原始現況**：`sqlserver.yaml` 手刻了一個 `hostPath` PV（`/mnt/data/sqlserver`）＋指定 `storageClassName: standard` 的 PVC；`redis-pvc` 則沒指定 storageClass、也沒有對應 PV。
 
 **必要性**：
 - `hostPath` 把資料綁死在特定節點，Pod 換節點資料就「消失」，多節點叢集不可用；這只適合單節點本機環境。
@@ -161,7 +173,7 @@ Internet → Ingress Controller (nginx/traefik)
 
 ### 11. 命名、組織與中繼資料
 
-- `redis.yaml:15` 的 Deployment 名稱是 **`redis-deploymentment`**——錯字（多了 `ment`），應更正為 `redis-deployment`（更主流的命名其實是直接叫 `redis`，`-deployment` 後綴屬冗餘）。
+- ✅ 已修正：redis Deployment 名稱錯字 `redis-deploymentment` 已更正為 `redis-deployment`（更主流的命名其實是直接叫 `redis`，`-deployment` 後綴屬冗餘）。
 - **缺 namespace**：所有資源都落在 `default`（只有 redis-secret 顯式寫了 `default`）。企業實踐是至少建立一個專案 namespace（如 `lookgo`），做資源隔離、RBAC 與 quota 的邊界。
 - **缺標準 labels**：只有 `app` 一個 label。建議補上 Kubernetes 推薦標籤（`app.kubernetes.io/name`、`app.kubernetes.io/component`、`app.kubernetes.io/part-of: lookgo` 等），監控、成本歸戶、`kubectl` 篩選都靠它。
 - **缺環境分層**：目前是一份寫死的 YAML。中小型專案主流是 **Kustomize**（base + overlays/dev/prod），不用引入額外工具鏈（`kubectl -k` 內建）；需求變複雜再上 Helm。

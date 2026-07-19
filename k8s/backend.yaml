@@ -72,7 +72,7 @@ spec:
                   name: jwt-secret
                   key: secret
             - name: JWT_ACCESS_TOKEN_EXPIRATION
-              value: "900000"
+              value: "3600000"
             - name: JWT_REFRESH_TOKEN_EXPIRATION
               value: "604800000"
             - name: ADMIN_PASSWORD
