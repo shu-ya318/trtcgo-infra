@@ -6,12 +6,7 @@
 > **所有指令的執行目錄皆為 `lookGo-infra/`**（前端 build context 因此寫成 `../lookGo-frontend`）。
 > 前置條件：Docker Desktop 已啟動，否則 `docker` 與 `kind` 皆無法連線。
 >
-> **指令環境：本文件全部指令以 Windows cmd.exe 為準**（非 PowerShell、非 Git Bash）。cmd 的單引號、跳脫字元、迴圈語法都跟 bash 不同，規則統一列在 2-0，套用到全文所有指令區塊（標示為 ` ```bat `）。
->
-> 標記說明：
->
-> - `【已實測】` = 已在本專案 kind 叢集（cluster `look-go`、context `kind-look-go`、namespace `default`）實際執行並記錄輸出。
-> - `【待驗收】` = 依官方文件推導，本專案尚未執行。
+> **指令環境：本文件全部指令以 Windows cmd.exe 為準**。cmd 的單引號、跳脫字元、迴圈語法都跟 bash 不同，規則統一列在 2-0，套用到全文所有指令區塊（標示為 ` ```bat `）。
 
 ## 心智模型：兩條鏈路，兩種操作方式
 
@@ -19,17 +14,39 @@
   ┌── ConfigMap: frontend-config ────────────────────────────────────┐
   │   DNS_RESOLVER / BACKEND_URL / NGINX_ENVSUBST_FILTER             │
   │        │ envFrom → 容器環境變數                                    │
-  │        │ envsubst（★ 只在容器啟動時跑一次）                         │
+  │        │ envsubst（★ 只在容器啟動時執行一次）                      │
   │        ▼                                                          │
   │   /etc/nginx/conf.d/default.conf        改了 → 必須 rollout restart│
   └───────────────────────────────────────────────────────────────────┘
 
   ┌── ConfigMap: frontend-app-config ────────────────────────────────┐
   │   config.js                                                       │
-  │        │ volume（★ kubelet 持續同步）                              │
+  │        │ volume（★ kubelet 持續同步更新變數值，把 ConfigMap frontend-app-config 內容同步到 Pod 內的 /usr/share/nginx/html/cfg/config.js）                              │
   │        ▼                                                          │
   │   /usr/share/nginx/html/cfg/config.js   改了 → 不需要重啟，等即可   │
   └───────────────────────────────────────────────────────────────────┘
+
+值要真正「生效」到畫面上，確實要等瀏覽器發請求，順序如下：
+
+① 瀏覽器 GET /
+   → nginx `location /` try_files 找到 index.html，回傳
+
+② HTML parser 解析到 <script src="/cfg/config.js">（classic script，同步執行）
+   → 瀏覽器發出第二個請求 GET /cfg/config.js
+
+③ nginx `location = /cfg/config.js` 精確匹配
+   → 把此刻掛載目錄裡「當下那份」config.js 原樣吐回
+   → 帶 Cache-Control: no-store，保證瀏覽器不會吃到舊快取
+
+④ 瀏覽器同步執行這段 script
+   → window.__APP_CONFIG__ = { appEnv, ssoClientId } 被寫入
+
+⑤ HTML parser 接著解析 <script type="module" src="/src/main.tsx">
+   → module script 具 defer 語意，執行時機一定晚於④
+   → appConfig.ts 這時讀 window.__APP_CONFIG__，跟 defaults merge，
+     匯出給整個 App 使用
+
+關鍵含意： 每一次瀏覽器開頁面或重新整理，都會重新走一次②→⑤，抓到的是「當下」掛載目錄裡最新的值。所以只要 kubelet 已經把新值同步進容器（背景常態那段），使用者下次整理頁面就會拿到新的 SSO 設定——完全不需要重啟 Pod，也不需要重新整理以外的任何動作。這正是它跟 nginx 層（DNS_RESOLVER/BACKEND_URL，一定要 container 重啟時 envsubst 才會重新寫死一次）本質不同的地方。
 
   ┌───────────────────────────────────────────────────────────────────┐
   │   /usr/share/nginx/html/assets/*.js（image 內，打包時凍結）         │
@@ -475,8 +492,6 @@ kubectl get pod -A -l app=frontend -o custom-columns=NAMESPACE:.metadata.namespa
 ```bat
 :: 執行目錄 lookGo-infra/
 docker build -t lookgo-frontend:ssotest --build-arg NPM_RC_FILE=.npmrc-public ../lookGo-frontend
-docker inspect --format="{{.Id}}" lookgo-frontend:ssotest
-:: 記下 sha256，3-5 要用它比對三環境是否一致
 kind load docker-image lookgo-frontend:ssotest --name look-go
 ```
 
@@ -813,7 +828,7 @@ kubectl apply -f sso-switch-test.yaml
 ```
 
 ```bat
-:: ConfigMap volume 是最終一致，耐心輪詢（最長約 1~2 分鐘），不要因前幾次沒變就判定失敗
+:: ConfigMap volume 是最終一致，耐心輪詢（最長約 1~2 分鐘）
 :: 直接在 cmd 提示字元互動輸入時用單個 %i；存成 .bat 檔要改成 %%i
 for /l %i in (1,1,24) do @(echo --- try %i --- & curl -s http://localhost:8095/cfg/config.js & timeout /t 5 >nul)
 ```
@@ -852,18 +867,18 @@ del k8s\sso-switch-test.yaml
 
 ### 更新後的心智模型對比表
 
-| 對比項目 | Nginx 層 | 瀏覽器層 |
-| --- | --- | --- |
-| 變數例子 | `DNS_RESOLVER`、`BACKEND_URL` | `ssoClientId`、`appEnv` |
-| ConfigMap | `frontend-config` | `frontend-app-config` |
-| 送達方式 | `envFrom` → 容器環境變數 | `volumeMount` → 檔案（掛**目錄** `/usr/share/nginx/html/cfg`，不可用 `subPath`） |
-| 誰在消費這個值 | nginx entrypoint 的 `20-envsubst-on-templates.sh`，**容器啟動當下**跑一次 | 瀏覽器：`<script src="/cfg/config.js">` 是 classic script，在 parser 走到時同步執行，早於 `type="module"` 的 SPA 主程式，把值寫進 `window.__APP_CONFIG__` |
-| 產出位置 | `/etc/nginx/conf.d/default.conf`（被解析、渲染進設定檔） | `/usr/share/nginx/html/cfg/config.js`（純靜態檔，nginx 原樣吐出，不解析內容） |
-| 改值後怎麼生效 | 改 ConfigMap 還不夠，**必須 `kubectl rollout restart`**（envsubst 只在啟動時跑一次） | 改 ConfigMap 後**什麼都不用做**，kubelet 自動同步 volume（最終一致） |
-| 本次實測延遲 | 需手動觸發才變（2-6 待驗收） | 2-5 節：42 秒後同步完成；3-6 節：第 11 次輪詢（約 55 秒）同步完成 |
-| 設定漏一個 key 的後果 | `[emerg] unknown "xxx" variable` → **CrashLoopBackOff，全站中斷** | 欄位讀到 `undefined`，`appConfig.ts` 用預設值降級，**服務不中斷** |
-| 本次 SSO 測試證據 | `grep backend_upstream` 三個 namespace（`sso-dev`/`sso-uat`/`sso-prod`）proxy 目標各自不同 | `curl /cfg/config.js` 三個 namespace 的 `ssoClientId` 各自不同（`sso-dev-0806-alpha` / `-beta` / `-gamma`）；改成 `-v2` 後 Pod 名稱、`restartCount`、`startedAt` 三者皆未變，證明真的沒重啟 |
-| 同一顆 image 的證據 | — | `kubectl get pod -A -o custom-columns=...IMAGEID` 三個 namespace 回傳的 `imageID` 完全一致（`sha256:881507a6...`），證明是同一顆 image 只是設定不同 |
+| 對比項目              | Nginx 層                                                                                   | 瀏覽器層                                                                                                                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 變數例子              | `DNS_RESOLVER`、`BACKEND_URL`                                                              | `ssoClientId`、`appEnv`                                                                                                                                                                     |
+| ConfigMap             | `frontend-config`                                                                          | `frontend-app-config`                                                                                                                                                                       |
+| 送達方式              | `envFrom` → 容器環境變數                                                                   | `volumeMount` → 檔案（掛**目錄** `/usr/share/nginx/html/cfg`，不可用 `subPath`）                                                                                                            |
+| 誰在消費這個值        | nginx entrypoint 的 `20-envsubst-on-templates.sh`，**容器啟動當下**跑一次                  | 瀏覽器：`<script src="/cfg/config.js">` 是 classic script，在 parser 走到時同步執行，早於 `type="module"` 的 SPA 主程式，把值寫進 `window.__APP_CONFIG__`                                   |
+| 產出位置              | `/etc/nginx/conf.d/default.conf`（被解析、渲染進設定檔）                                   | `/usr/share/nginx/html/cfg/config.js`（純靜態檔，nginx 原樣吐出，不解析內容）                                                                                                               |
+| 改值後怎麼生效        | 改 ConfigMap 還不夠，**必須 `kubectl rollout restart`**（envsubst 只在啟動時跑一次）       | 改 ConfigMap 後**什麼都不用做**，kubelet 自動同步 volume（最終一致）                                                                                                                        |
+| 本次實測延遲          | 需手動觸發才變（2-6 待驗收）                                                               | 2-5 節：42 秒後同步完成；3-6 節：第 11 次輪詢（約 55 秒）同步完成                                                                                                                           |
+| 設定漏一個 key 的後果 | `[emerg] unknown "xxx" variable` → **CrashLoopBackOff，全站中斷**                          | 欄位讀到 `undefined`，`appConfig.ts` 用預設值降級，**服務不中斷**                                                                                                                           |
+| 本次 SSO 測試證據     | `grep backend_upstream` 三個 namespace（`sso-dev`/`sso-uat`/`sso-prod`）proxy 目標各自不同 | `curl /cfg/config.js` 三個 namespace 的 `ssoClientId` 各自不同（`sso-dev-0806-alpha` / `-beta` / `-gamma`）；改成 `-v2` 後 Pod 名稱、`restartCount`、`startedAt` 三者皆未變，證明真的沒重啟 |
+| 同一顆 image 的證據   | —                                                                                          | `kubectl get pod -A -o custom-columns=...IMAGEID` 三個 namespace 回傳的 `imageID` 完全一致（`sha256:881507a6...`），證明是同一顆 image 只是設定不同                                         |
 
 ### 如何管理變數，達成「打包一次、多環境動態切換 SSO」
 
