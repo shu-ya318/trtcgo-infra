@@ -1,0 +1,203 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sso-dev
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: sso-dev
+data:
+  DNS_RESOLVER: 'kube-dns.kube-system.svc.cluster.local'
+  BACKEND_URL: 'backend-service.sso-dev.svc.cluster.local:8080'
+  NGINX_ENVSUBST_FILTER: '^(DNS_RESOLVER|BACKEND_URL)$'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-app-config
+  namespace: sso-dev
+data:
+  config.js: |
+    window.__APP_CONFIG__ = { appEnv: "dev", ssoClientId: "sso-dev-0806-alpha-v2" };
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe-test
+  namespace: sso-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fe-test }
+  template:
+    metadata:
+      labels: { app: fe-test }
+    spec:
+      containers:
+        - name: frontend
+          image: docker.io/library/lookgo-frontend:ssotest # 三個 namespace 必須完全相同
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: frontend-config
+          volumeMounts:
+            - name: app-config
+              mountPath: /usr/share/nginx/html/cfg # ★ 目錄掛載，不可用 subPath
+              readOnly: true
+      volumes:
+        - name: app-config
+          configMap:
+            name: frontend-app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fe-test
+  namespace: sso-dev
+spec:
+  type: ClusterIP
+  selector:
+    app: fe-test
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sso-uat
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: sso-uat
+data:
+  DNS_RESOLVER: 'kube-dns.kube-system.svc.cluster.local'
+  BACKEND_URL: 'backend-service.sso-uat.svc.cluster.local:8080'
+  NGINX_ENVSUBST_FILTER: '^(DNS_RESOLVER|BACKEND_URL)$'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-app-config
+  namespace: sso-uat
+data:
+  config.js: |
+    window.__APP_CONFIG__ = { appEnv: "uat", ssoClientId: "sso-uat-0806-beta" };
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe-test
+  namespace: sso-uat
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fe-test }
+  template:
+    metadata:
+      labels: { app: fe-test }
+    spec:
+      containers:
+        - name: frontend
+          image: docker.io/library/lookgo-frontend:ssotest # 三個 namespace 必須完全相同
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: frontend-config
+          volumeMounts:
+            - name: app-config
+              mountPath: /usr/share/nginx/html/cfg # ★ 目錄掛載，不可用 subPath
+              readOnly: true
+      volumes:
+        - name: app-config
+          configMap:
+            name: frontend-app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fe-test
+  namespace: sso-uat
+spec:
+  type: ClusterIP
+  selector:
+    app: fe-test
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sso-prod
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: sso-prod
+data:
+  DNS_RESOLVER: 'kube-dns.kube-system.svc.cluster.local'
+  BACKEND_URL: 'backend-service.sso-prod.svc.cluster.local:8080'
+  NGINX_ENVSUBST_FILTER: '^(DNS_RESOLVER|BACKEND_URL)$'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-app-config
+  namespace: sso-prod
+data:
+  config.js: |
+    window.__APP_CONFIG__ = { appEnv: "prod", ssoClientId: "sso-prod-0806-gamma" };
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe-test
+  namespace: sso-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fe-test }
+  template:
+    metadata:
+      labels: { app: fe-test }
+    spec:
+      containers:
+        - name: frontend
+          image: docker.io/library/lookgo-frontend:ssotest # 三個 namespace 必須完全相同
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: frontend-config
+          volumeMounts:
+            - name: app-config
+              mountPath: /usr/share/nginx/html/cfg # ★ 目錄掛載，不可用 subPath
+              readOnly: true
+      volumes:
+        - name: app-config
+          configMap:
+            name: frontend-app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fe-test
+  namespace: sso-prod
+spec:
+  type: ClusterIP
+  selector:
+    app: fe-test
+  ports:
+    - port: 80
+      targetPort: 80

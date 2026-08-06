@@ -109,8 +109,6 @@ spec:
                 secretKeyRef:
                   name: backend-secret
                   key: tdx-client-secret
-            - name: MVN_SETTINGS
-              value: "settings-nexus.xml"
             # - name: MAIL_USERNAME
             #   valueFrom:
             #     secretKeyRef:

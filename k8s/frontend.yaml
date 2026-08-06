@@ -28,13 +28,18 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
-          env:
-            - name: DNS_RESOLVER
-              value: "kube-dns.kube-system.svc.cluster.local" # 確保 hostname 可以被正確解析、拿到 CoreDNS 位址
-            - name: BACKEND_URL
-              value: "backend-service.default.svc.cluster.local:8080" # 用完整 FQDN ，不能用短名稱
-            - name: NPM_RC_FILE
-              value: "settings-nexus.xml"
+          envFrom:
+            # nginx 層：值進到容器環境變數，由官方 entrypoint 的 envsubst 寫進 default.conf。
+            # 改了這份 ConfigMap 必須 rollout restart，envsubst 只在容器啟動時跑一次。
+            - configMapRef:
+                name: frontend-config
+          volumeMounts:
+            # 瀏覽器層：ConfigMap 以「目錄」掛進 nginx 靜態根目錄底下的 cfg/。
+            # ★ 不可改用 subPath，那會失去 ConfigMap 更新自動同步的能力。
+            # ★ 掛在 /cfg 而非根目錄，否則會把整個 dist（index.html、assets/）蓋掉。
+            - name: app-config
+              mountPath: /usr/share/nginx/html/cfg
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /
@@ -51,6 +56,12 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 3
+      volumes:
+        - name: app-config
+          configMap:
+            name: frontend-app-config
+            # 刻意不加 optional: true —— ConfigMap 不存在時應該讓 Pod 卡在 ContainerCreating、
+            # 在部署階段就大聲失敗，而不是讓一個沒有設定的前端上線。
 ---
 apiVersion: v1
 kind: Service

@@ -96,10 +96,15 @@ services:
     ports:
       - "8081:80"
     environment:
+      # 127.0.0.11 是 Docker 在 user-defined network（lookGo-network）中提供的內建 DNS
+      - DNS_RESOLVER=${DNS_RESOLVER:-127.0.0.11}
       - BACKEND_URL=${BACKEND_URL}
     volumes:
-      - ../lookGo-frontend/nginx.conf:/etc/nginx/conf.d/default.conf.template:ro
-    command: /bin/sh -c "envsubst '$$BACKEND_URL' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"    
+      # 掛到官方 templates 目錄，交由 /docker-entrypoint.d/20-envsubst-on-templates.sh 處理，
+      # 與 K8s 走完全相同的注入鏈路（不可覆寫 command，否則 $1 不是 nginx，整批腳本會被跳過）
+      - ../lookGo-frontend/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      # 對應 K8s 的 frontend-app-config ConfigMap volume
+      - ./local-cfg:/usr/share/nginx/html/cfg:ro
     depends_on:
       backend:
         condition: service_healthy

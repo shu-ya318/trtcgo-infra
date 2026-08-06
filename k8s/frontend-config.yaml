@@ -1,0 +1,35 @@
+# 前端設定分成兩份 ConfigMap，對應兩條互相獨立的注入鏈路：
+#
+#   ① frontend-config      → 環境變數 → envsubst → /etc/nginx/conf.d/default.conf
+#      「nginx 自己要用的」基礎設施參數，很少變動。
+#      ★ nginx.conf 裡每一個 ${...} 都必須在這裡有對應 key，
+#        缺一個 nginx 就會 [emerg] 啟動失敗 → CrashLoopBackOff（全站中斷）。
+#
+#   ② frontend-app-config  → 檔案 → volume → /usr/share/nginx/html/cfg/config.js
+#      「瀏覽器要用的」前端 runtime 設定，會隨業務需求增減。
+#      內容是純文字，不經過任何解析器，因此沒有字元限制；
+#      漏了欄位只會讓前端用 appConfig.ts 的預設值降級，不會中斷服務。
+#
+# 換環境（dev / uat / prod）時只需要換這個檔案的值，image 不需要重新打包。
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+data:
+  DNS_RESOLVER: "kube-dns.kube-system.svc.cluster.local" # 確保 hostname 可以被正確解析、拿到 CoreDNS 位址
+  BACKEND_URL: "backend-service.default.svc.cluster.local:8080" # 用完整 FQDN，不能用短名稱
+  # 只允許上面兩個變數被 envsubst 替換，避免日後新增的環境變數與 nginx 內建變數撞名
+  NGINX_ENVSUBST_FILTER: "^(DNS_RESOLVER|BACKEND_URL)$"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-app-config
+data:
+  # 這份內容會原封不動送到瀏覽器，只放公開設定，機密值一律留在 backend-secret。
+  config.js: |
+    window.__APP_CONFIG__ = {
+      appEnv: "dev",
+      ssoClientId: "dev-client-placeholder"
+    };
